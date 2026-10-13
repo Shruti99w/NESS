@@ -1,9 +1,36 @@
--- SQL Hands-on Lab : setup script (PostgreSQL 12+)
--- Run once in an empty database. Safe to re-run: it drops and rebuilds the lab tables.
+-- SQL Hands-on Lab: MySQL setup (MySQL 5.7 / 8.x)
+-- Open this file in MySQL Workbench and execute the entire script.
+-- Requires permission to create/use the sql_hands_on_lab database.
+-- WARNING: Re-running rebuilds the named lab tables and removes their existing data.
+CREATE DATABASE IF NOT EXISTS sql_hands_on_lab CHARACTER SET utf8mb4;
+USE sql_hands_on_lab;
 
 DROP VIEW  IF EXISTS v_monthly_revenue;
-DROP TABLE IF EXISTS order_items, orders, promotions, products, customers,
-                     salary_grades, employees, departments CASCADE;
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS promotions;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS salary_grades;
+DROP TABLE IF EXISTS employees;
+DROP TABLE IF EXISTS departments;
+
+-- Generate 1..150000 without PostgreSQL generate_series or recursive CTE limits.
+DROP TEMPORARY TABLE IF EXISTS lab_digits;
+DROP TEMPORARY TABLE IF EXISTS lab_numbers;
+CREATE TEMPORARY TABLE lab_digits (d INT PRIMARY KEY);
+INSERT INTO lab_digits VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TEMPORARY TABLE lab_numbers (g INT PRIMARY KEY);
+-- Separate derived digit sets avoid MySQL temporary-table reopen errors.
+INSERT INTO lab_numbers (g)
+SELECT 1 + a.d + 10*b.d + 100*c.d + 1000*d.d + 10000*e.d + 100000*f.d
+FROM lab_digits a
+CROSS JOIN (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) b
+CROSS JOIN (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) c
+CROSS JOIN (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) d
+CROSS JOIN (SELECT 0 d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) e
+CROSS JOIN (SELECT 0 d UNION ALL SELECT 1) f
+WHERE 1 + a.d + 10*b.d + 100*c.d + 1000*d.d + 10000*e.d + 100000*f.d <= 150000;
 
 -- ---------------------------------------------------------------
 -- Reference data
@@ -12,7 +39,7 @@ CREATE TABLE departments (
     dept_id    INT PRIMARY KEY,
     dept_name  VARCHAR(40) NOT NULL,
     location   VARCHAR(40) NOT NULL
-);
+) ENGINE=InnoDB;
 
 INSERT INTO departments VALUES
  (10, 'Executive',   'Mumbai'),
@@ -25,11 +52,13 @@ CREATE TABLE employees (
     emp_id     INT PRIMARY KEY,
     emp_name   VARCHAR(40) NOT NULL,
     job_title  VARCHAR(40) NOT NULL,
-    manager_id INT REFERENCES employees(emp_id),
-    dept_id    INT NOT NULL REFERENCES departments(dept_id),
+    manager_id INT,
+    dept_id    INT NOT NULL,
     hire_date  DATE NOT NULL,
-    salary     NUMERIC(10,2) NOT NULL
-);
+    salary     NUMERIC(10,2) NOT NULL,
+    FOREIGN KEY (manager_id) REFERENCES employees(emp_id),
+    FOREIGN KEY (dept_id) REFERENCES departments(dept_id)
+) ENGINE=InnoDB;
 
 INSERT INTO employees VALUES
  (1,  'Meera Kapoor',   'CEO',                 NULL, 10, '2015-04-01', 310000),
@@ -60,7 +89,7 @@ CREATE TABLE salary_grades (
     grade       CHAR(1) PRIMARY KEY,
     min_salary  NUMERIC(10,2) NOT NULL,
     max_salary  NUMERIC(10,2) NOT NULL
-);
+) ENGINE=InnoDB;
 
 INSERT INTO salary_grades VALUES
  ('A',      0,  49999.99),
@@ -75,7 +104,7 @@ CREATE TABLE promotions (
     start_date    DATE NOT NULL,
     end_date      DATE NOT NULL,
     discount_pct  NUMERIC(4,1) NOT NULL
-);
+) ENGINE=InnoDB;
 
 INSERT INTO promotions VALUES
  (1, 'Diwali 2023',      '2023-10-20', '2023-11-15', 10.0),
@@ -94,73 +123,78 @@ CREATE TABLE customers (
     city           VARCHAR(30) NOT NULL,
     segment        VARCHAR(15) NOT NULL,
     signup_date    DATE NOT NULL
-);
+) ENGINE=InnoDB;
 
 INSERT INTO customers
 SELECT g,
-       'Customer ' || LPAD(g::text, 5, '0'),
-       (ARRAY['Mumbai','Delhi','Bengaluru','Pune','Chennai','Hyderabad','Kolkata','Jaipur'])[1 + g % 8],
-       (ARRAY['Retail','Corporate','SME'])[1 + g % 3],
-       DATE '2021-01-01' + (g % 900)
-FROM generate_series(1, 5000) g;
+       CONCAT('Customer ', LPAD(CAST(g AS CHAR), 5, '0')),
+       ELT(1 + g % 8, 'Mumbai','Delhi','Bengaluru','Pune','Chennai','Hyderabad','Kolkata','Jaipur'),
+       ELT(1 + g % 3, 'Retail','Corporate','SME'),
+       DATE_ADD('2021-01-01', INTERVAL (g % 900) DAY)
+FROM lab_numbers WHERE g <= 5000;
 
 CREATE TABLE products (
     product_id    INT PRIMARY KEY,
     product_name  VARCHAR(60) NOT NULL,
     category      VARCHAR(30) NOT NULL,
     unit_price    NUMERIC(10,2) NOT NULL
-);
+) ENGINE=InnoDB;
 
 INSERT INTO products
 SELECT g,
-       'Product ' || LPAD(g::text, 3, '0'),
-       (ARRAY['Laptops','Accessories','Software','Storage','Networking'])[1 + g % 5],
-       ROUND((500 + (g * 937) % 45000)::numeric, 2)
-FROM generate_series(1, 60) g;
+       CONCAT('Product ', LPAD(CAST(g AS CHAR), 3, '0')),
+       ELT(1 + g % 5, 'Laptops','Accessories','Software','Storage','Networking'),
+       ROUND(500 + (g * 937) % 45000, 2)
+FROM lab_numbers WHERE g <= 60;
 
 -- products 59 and 60 are never ordered (see the generator below)
 
 CREATE TABLE orders (
     order_id     INT PRIMARY KEY,
-    customer_id  INT NOT NULL REFERENCES customers(customer_id),
-    emp_id       INT REFERENCES employees(emp_id),   -- NULL = online order, no sales rep
+    customer_id  INT NOT NULL,
+    emp_id       INT,   -- NULL = online order, no sales rep
     order_date   DATE NOT NULL,
-    status       VARCHAR(12) NOT NULL
-);
+    status       VARCHAR(12) NOT NULL,
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id),
+    FOREIGN KEY (emp_id) REFERENCES employees(emp_id)
+) ENGINE=InnoDB;
 
 INSERT INTO orders
 SELECT g,
        1 + (g * 7919) % 4800,                         -- customers 4801-5000 never order
        CASE WHEN g % 10 = 0 THEN NULL                 -- every 10th order is online
-            ELSE (ARRAY[7,8,10,22])[1 + g % 4] END,   -- only four reps actually sell
-       DATE '2022-01-01' + (g * 13) % 1460,           -- 2022-01-01 .. 2025-12-30
+            ELSE CAST(ELT(1 + g % 4, 7,8,10,22) AS UNSIGNED) END,   -- only four reps actually sell
+       DATE_ADD('2022-01-01', INTERVAL ((g * 13) % 1460) DAY),           -- 2022-01-01 .. 2025-12-30
        CASE WHEN g % 50 = 0 THEN 'CANCELLED'
             WHEN g % 25 = 0 THEN 'PENDING'
             WHEN g % 7  = 0 THEN 'RETURNED'
             ELSE 'DELIVERED' END
-FROM generate_series(1, 150000) g;
+FROM lab_numbers;
 
 CREATE TABLE order_items (
     order_item_id  INT PRIMARY KEY,
-    order_id       INT NOT NULL REFERENCES orders(order_id),
-    product_id     INT NOT NULL REFERENCES products(product_id),
+    order_id       INT NOT NULL,
+    product_id     INT NOT NULL,
     quantity       INT NOT NULL,
-    unit_price     NUMERIC(10,2) NOT NULL
-);
+    unit_price     NUMERIC(10,2) NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(order_id),
+    FOREIGN KEY (product_id) REFERENCES products(product_id)
+) ENGINE=InnoDB;
 
 INSERT INTO order_items
-SELECT ROW_NUMBER() OVER (ORDER BY o.order_id, n),
+SELECT 2 * (o.order_id - 1) + FLOOR(MOD(o.order_id - 1, 3) / 2) + seq.n,
        o.order_id,
        p.product_id,
-       1 + (o.order_id + n) % 4,
+       1 + (o.order_id + seq.n) % 4,
        p.unit_price
 FROM orders o
-CROSS JOIN LATERAL generate_series(1, 1 + o.order_id % 3) n
-JOIN products p ON p.product_id = 1 + (o.order_id * 3 + n * 11) % 58;
+JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3) seq
+  ON seq.n <= 1 + o.order_id % 3
+JOIN products p ON p.product_id = 1 + (o.order_id * 3 + seq.n * 11) % 58;
 
 -- Monthly revenue helper used in Module 1 (delivered orders only)
 CREATE VIEW v_monthly_revenue AS
-SELECT DATE_TRUNC('month', o.order_date)::date AS sales_month,
+SELECT CAST(DATE_FORMAT(o.order_date, '%Y-%m-01') AS DATE) AS sales_month,
        COUNT(DISTINCT o.order_id)              AS orders,
        SUM(oi.quantity * oi.unit_price)        AS revenue
 FROM orders o
@@ -168,4 +202,17 @@ JOIN order_items oi ON oi.order_id = o.order_id
 WHERE o.status = 'DELIVERED'
 GROUP BY 1;
 
-ANALYZE;
+ANALYZE TABLE departments, employees, salary_grades, promotions,
+              customers, products, orders, order_items;
+DROP TEMPORARY TABLE lab_numbers;
+DROP TEMPORARY TABLE lab_digits;
+
+-- Expected counts: 5, 22, 5, 6, 5000, 60, 150000, 300000.
+SELECT 'departments' AS table_name, COUNT(*) AS row_count FROM departments
+UNION ALL SELECT 'employees', COUNT(*) FROM employees
+UNION ALL SELECT 'salary_grades', COUNT(*) FROM salary_grades
+UNION ALL SELECT 'promotions', COUNT(*) FROM promotions
+UNION ALL SELECT 'customers', COUNT(*) FROM customers
+UNION ALL SELECT 'products', COUNT(*) FROM products
+UNION ALL SELECT 'orders', COUNT(*) FROM orders
+UNION ALL SELECT 'order_items', COUNT(*) FROM order_items;
