@@ -1,0 +1,41 @@
+CREATE TABLE FILE_SOURCE (
+    FileId INT,
+    FileName VARCHAR(30),
+    lastmodifytime DATETIME
+);
+
+INSERT INTO FILE_SOURCE (FileId, FileName, lastmodifytime)
+VALUES
+(1, 'History', '05/06/2022 12:35:00 AM'),
+(2, 'Maths',   '05/07/2022 12:35:00 AM'),
+(3, 'Physics','05/08/2022 04:35:00 AM'),
+(4, 'Social', '05/09/2022 12:35:00 AM'),
+(5, 'Science','05/10/2022 12:35:00 AM');
+
+SELECT * FROM FILE_SOURCE;
+
+CREATE TABLE watermarktable (
+    TableName VARCHAR(40),
+    WatermarkValue DATETIME
+);
+INSERT INTO watermarktable
+VALUES ('FILE_SOURCE', '05/07/2022 08:35:00 AM');
+
+SELECT * FROM watermarktable;
+SELECT * FROM FILE_SOURCE;
+
+CREATE PROCEDURE update_watermark_table
+    @lastmodifytime DATETIME,
+    @TableName VARCHAR(40)
+AS
+BEGIN
+    UPDATE watermarktable
+    SET WatermarkValue = @lastmodifytime
+    WHERE TableName = @TableName;
+END;
+
+select max(lastmodifytime) as latestdate from file_source;
+
+
+
+
